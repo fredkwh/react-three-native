@@ -133,38 +133,44 @@ export function polyfills() {
       const url = URL.createObjectURL(blob)
       URL.revokeObjectURL(url)
     } catch (_) {
-      const BlobManagerModule = require('react-native/Libraries/Blob/BlobManager.js')
-      const BlobManager = BlobManagerModule.default ?? BlobManagerModule
+      // Patch BlobManager for older RN versions that can't handle ArrayBuffer in Blob.
+      // The internal module path may not exist in newer RN versions (>=0.83) — skip if so.
+      try {
+        const BlobManagerModule = require('react-native/Libraries/Blob/BlobManager.js')
+        const BlobManager = BlobManagerModule.default ?? BlobManagerModule
 
-      const origCreateObjectURL = URL.createObjectURL
-      URL.createObjectURL = function (blob: Blob): string {
-        if ((blob as any).data._base64) {
-          return `data:${blob.type};base64,${(blob as any).data._base64}`
-        }
-
-        return origCreateObjectURL(blob)
-      }
-
-      const origCreateFromParts = BlobManager.createFromParts
-      BlobManager.createFromParts = function (parts: Array<Blob | BlobPart | string>, options: any) {
-        parts = parts.map((part) => {
-          if (part instanceof ArrayBuffer || ArrayBuffer.isView(part)) {
-            part = fromByteArray(new Uint8Array(part as ArrayBuffer))
+        const origCreateObjectURL = URL.createObjectURL
+        URL.createObjectURL = function (blob: Blob): string {
+          if ((blob as any).data._base64) {
+            return `data:${blob.type};base64,${(blob as any).data._base64}`
           }
 
-          return part
-        })
-
-        const blob = origCreateFromParts(parts, options)
-
-        // Always enable slow but safe path for iOS (previously for Android unauth)
-        // https://github.com/pmndrs/react-three-fiber/issues/3075
-        blob.data._base64 = ''
-        for (const part of parts) {
-          blob.data._base64 += (part as any).data?._base64 ?? part
+          return origCreateObjectURL(blob)
         }
 
-        return blob
+        const origCreateFromParts = BlobManager.createFromParts
+        BlobManager.createFromParts = function (parts: Array<Blob | BlobPart | string>, options: any) {
+          parts = parts.map((part) => {
+            if (part instanceof ArrayBuffer || ArrayBuffer.isView(part)) {
+              part = fromByteArray(new Uint8Array(part as ArrayBuffer))
+            }
+
+            return part
+          })
+
+          const blob = origCreateFromParts(parts, options)
+
+          // Always enable slow but safe path for iOS (previously for Android unauth)
+          // https://github.com/pmndrs/react-three-fiber/issues/3075
+          blob.data._base64 = ''
+          for (const part of parts) {
+            blob.data._base64 += (part as any).data?._base64 ?? part
+          }
+
+          return blob
+        }
+      } catch (_) {
+        // BlobManager not available — newer RN version likely handles Blob natively
       }
     }
   }
