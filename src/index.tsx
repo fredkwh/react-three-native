@@ -26,9 +26,13 @@ export { createTouchEvents as events } from './events'
 export { GLContextProvider, useGLContext, type GLContextValue, type GLContextProps } from './context'
 
 // Initialize polyfills on import (can be disabled by not importing from root)
+// Pass three explicitly so the polyfill patches this module's three instance.
+// Consumers may also need to call polyfills(THREE) with their own import if
+// Metro resolves CJS/ESM to different three entry points.
 import { Platform } from 'react-native'
+import * as THREE from 'three'
 import { polyfills } from './polyfills'
 
 if (Platform.OS !== 'web') {
-  polyfills()
+  polyfills(THREE)
 }

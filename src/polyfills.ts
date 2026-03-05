@@ -3,9 +3,17 @@
  *
  * These polyfills patch Three.js loaders and React Native APIs
  * to work correctly in the React Native environment.
+ *
+ * Usage:
+ *   // Auto-apply all polyfills (patches bundled three instance):
+ *   import '@react-three/native'
+ *
+ *   // Explicitly patch the consumer's three instance:
+ *   import * as THREE from 'three'
+ *   import { polyfills } from '@react-three/native'
+ *   polyfills(THREE)
  */
 
-import * as THREE from 'three'
 import { Image, NativeModules, Platform } from 'react-native'
 import { fromByteArray } from 'base64-js'
 import { Buffer } from 'buffer'
@@ -109,21 +117,103 @@ async function getAsset(input: string | number): Promise<string> {
 
 //* Polyfills ==============================
 
-// Save original references once so polyfills() is idempotent
-const _originals = {
-  extractUrlBase: THREE.LoaderUtils.extractUrlBase.bind(THREE.LoaderUtils),
-  textureLoad: THREE.TextureLoader.prototype.load,
-  fileLoad: THREE.FileLoader.prototype.load,
+let _globalApplied = false
+const _patchedPrototypes = new WeakSet<object>()
+
+/**
+ * Patch Three.js loaders on a specific THREE module instance.
+ * Uses a WeakSet to ensure each prototype is only patched once.
+ */
+function patchThreeLoaders(T: any) {
+  if (_patchedPrototypes.has(T.TextureLoader.prototype)) return
+  _patchedPrototypes.add(T.TextureLoader.prototype)
+
+  // Save originals for this instance
+  const origExtractUrlBase = T.LoaderUtils.extractUrlBase.bind(T.LoaderUtils)
+
+  // Don't pre-process urls, let expo-asset generate an absolute URL
+  T.LoaderUtils.extractUrlBase = (url: string) => (typeof url === 'string' ? origExtractUrlBase(url) : './')
+
+  // There's no Image in native, so create a data texture instead
+  T.TextureLoader.prototype.load = function load(this: any, url: any, onLoad: any, onProgress: any, onError: any) {
+    if (this.path && typeof url === 'string') url = this.path + url
+
+    const texture = new T.Texture()
+
+    this.manager.itemStart(url)
+
+    getAsset(url)
+      .then(async (uri: string) => {
+        // https://github.com/expo/expo-three/pull/266
+        const { width, height } = await new Promise<{ width: number; height: number }>((res, rej) =>
+          Image.getSize(uri, (width, height) => res({ width, height }), rej),
+        )
+
+        texture.image = {
+          // Special case for EXGLImageUtils::loadImage
+          data: { localUri: uri },
+          width,
+          height,
+        }
+        texture.flipY = true // Since expo-gl@12.4.0
+        texture.needsUpdate = true
+
+        // Force non-DOM upload for EXGL texImage2D
+        texture.isDataTexture = true
+
+        onLoad?.(texture)
+      })
+      .catch((error: any) => {
+        onError?.(error)
+        this.manager.itemError(url)
+      })
+      .finally(() => {
+        this.manager.itemEnd(url)
+      })
+
+    return texture
+  }
+
+  // Fetches assets via FS
+  const fs = getFileSystem()
+  if (fs) {
+    T.FileLoader.prototype.load = function load(this: any, url: any, onLoad: any, onProgress: any, onError: any) {
+      if (this.path && typeof url === 'string') url = this.path + url
+
+      this.manager.itemStart(url)
+
+      getAsset(url)
+        .then(async (uri: string) => {
+          const base64 = await fs.readAsStringAsync(uri, { encoding: fs.EncodingType.Base64 })
+          const data = Buffer.from(base64, 'base64')
+
+          // Respect responseType like the original FileLoader
+          switch (this.responseType) {
+            case 'json':
+              onLoad?.(JSON.parse(data.toString('utf-8')))
+              break
+            case '':
+            case 'text':
+              onLoad?.(data.toString('utf-8'))
+              break
+            default:
+              // 'arraybuffer' and any other type
+              onLoad?.(data.buffer)
+              break
+          }
+        })
+        .catch((error: any) => {
+          onError?.(error)
+          this.manager.itemError(url)
+        })
+        .finally(() => {
+          this.manager.itemEnd(url)
+        })
+    }
+  }
 }
 
-let _applied = false
-
-export function polyfills() {
-  if (_applied) return
-  _applied = true
-
-  const fs = getFileSystem()
-
+function applyGlobalPolyfills() {
   // Patch Blob for ArrayBuffer and URL if unsupported
   // https://github.com/facebook/react-native/pull/39276
   // https://github.com/pmndrs/react-three-fiber/issues/3058
@@ -174,86 +264,40 @@ export function polyfills() {
       }
     }
   }
+}
 
-  // Don't pre-process urls, let expo-asset generate an absolute URL
-  THREE.LoaderUtils.extractUrlBase = (url: string) => (typeof url === 'string' ? _originals.extractUrlBase(url) : './')
+/**
+ * Apply React Native polyfills for Three.js.
+ *
+ * Call without arguments to auto-patch (uses the bundled three instance):
+ *   polyfills()
+ *
+ * Pass your THREE instance to guarantee the correct module is patched
+ * (needed when Metro resolves CJS/ESM to different three entry points):
+ *   import * as THREE from 'three'
+ *   polyfills(THREE)
+ *
+ * Safe to call multiple times — global polyfills run once, THREE loader
+ * patches are tracked per-prototype via WeakSet.
+ */
+export function polyfills(userTHREE?: any) {
+  // Apply global polyfills (Blob, URL) once
+  if (!_globalApplied) {
+    _globalApplied = true
+    applyGlobalPolyfills()
+  }
 
-  // There's no Image in native, so create a data texture instead
-  // Cast to any to bypass generic Texture<HTMLImageElement> typing since native uses custom image format
-  THREE.TextureLoader.prototype.load = function load(this: THREE.TextureLoader, url, onLoad, onProgress, onError) {
-    if (this.path && typeof url === 'string') url = this.path + url
-
-    const texture = new THREE.Texture()
-
-    this.manager.itemStart(url)
-
-    getAsset(url)
-      .then(async (uri) => {
-        // https://github.com/expo/expo-three/pull/266
-        const { width, height } = await new Promise<{ width: number; height: number }>((res, rej) =>
-          Image.getSize(uri, (width, height) => res({ width, height }), rej),
-        )
-
-        texture.image = {
-          // Special case for EXGLImageUtils::loadImage
-          data: { localUri: uri },
-          width,
-          height,
-        }
-        texture.flipY = true // Since expo-gl@12.4.0
-        texture.needsUpdate = true
-
-        // Force non-DOM upload for EXGL texImage2D
-        // @ts-expect-error
-        texture.isDataTexture = true
-
-        onLoad?.(texture as any)
-      })
-      .catch((error) => {
-        onError?.(error)
-        this.manager.itemError(url)
-      })
-      .finally(() => {
-        this.manager.itemEnd(url)
-      })
-
-    return texture as any
-  } as typeof THREE.TextureLoader.prototype.load
-
-  // Fetches assets via FS
-  if (fs) {
-    THREE.FileLoader.prototype.load = function load(this: THREE.FileLoader, url, onLoad, onProgress, onError) {
-      if (this.path && typeof url === 'string') url = this.path + url
-
-      this.manager.itemStart(url)
-
-      getAsset(url)
-        .then(async (uri) => {
-          const base64 = await fs.readAsStringAsync(uri, { encoding: fs.EncodingType.Base64 })
-          const data = Buffer.from(base64, 'base64')
-
-          // Respect responseType like the original FileLoader
-          switch (this.responseType) {
-            case 'json':
-              onLoad?.(JSON.parse(data.toString('utf-8')))
-              break
-            case '':
-            case 'text':
-              onLoad?.(data.toString('utf-8'))
-              break
-            default:
-              // 'arraybuffer' and any other type
-              onLoad?.(data.buffer)
-              break
-          }
-        })
-        .catch((error) => {
-          onError?.(error)
-          this.manager.itemError(url)
-        })
-        .finally(() => {
-          this.manager.itemEnd(url)
-        })
+  // Patch THREE loaders
+  if (userTHREE) {
+    patchThreeLoaders(userTHREE)
+  } else {
+    // Fallback: try to require three from this package's resolution context.
+    // This may resolve to a different three entry point than the consumer's import
+    // (CJS vs ESM via package.json exports), but it's better than nothing.
+    try {
+      patchThreeLoaders(require('three'))
+    } catch {
+      // three not available — skip loader patching
     }
   }
 }
