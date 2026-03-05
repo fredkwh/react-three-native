@@ -27,9 +27,11 @@
   },
   "main": "dist/index.cjs.js",
   "module": "dist/index.esm.js",
+  "react-native": "dist/index.cjs.js",
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
+      "react-native": "./dist/index.cjs.js",
       "types": "./dist/index.d.ts",
       "import": "./dist/index.esm.js",
       "require": "./dist/index.cjs.js"
