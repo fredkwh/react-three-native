@@ -97,6 +97,7 @@ function CanvasImpl({
 
   const viewRef = React.useRef<View>(null!)
   const root = React.useRef<ReconcilerRoot<HTMLCanvasElement>>(null!)
+  const canvasRef = React.useRef<HTMLCanvasElement | null>(null)
 
   const [antialias, setAntialias] = React.useState<boolean>(true)
 
@@ -116,8 +117,8 @@ function CanvasImpl({
         height: context.drawingBufferHeight,
         clientWidth: context.drawingBufferWidth,
         clientHeight: context.drawingBufferHeight,
-        getContext: (_: any, { antialias = false }) => {
-          setAntialias(antialias)
+        getContext: (_: any, options?: { antialias?: boolean }) => {
+          setAntialias(options?.antialias ?? false)
           return context
         },
         addEventListener(type: string, listener: EventListener) {
@@ -157,7 +158,14 @@ function CanvasImpl({
       canvas.ownerDocument = canvas
       canvas.getRootNode = () => canvas
 
+      // Unmount previous root if context is being re-created (e.g. context loss)
+      if (canvasRef.current) {
+        unmountComponentAtNode(canvasRef.current)
+        canvasRef.current = null
+      }
+
       root.current = createRoot<HTMLCanvasElement>(canvas)
+      canvasRef.current = canvas
       setCanvas(canvas)
 
       function handleTouch(gestureEvent: GestureResponderEvent, type: string): true {
@@ -248,7 +256,13 @@ function CanvasImpl({
 
   React.useEffect(() => {
     if (canvas) {
-      return () => unmountComponentAtNode(canvas!)
+      return () => {
+        // Use ref for cleanup — canvasRef is set synchronously so it's
+        // always current, unlike canvas state which may not have flushed.
+        const target = canvasRef.current
+        if (target) unmountComponentAtNode(target)
+        canvasRef.current = null
+      }
     }
   }, [canvas])
 
