@@ -134,7 +134,13 @@ function patchThreeLoaders(T: any) {
   // Don't pre-process urls, let expo-asset generate an absolute URL
   T.LoaderUtils.extractUrlBase = (url: string) => (typeof url === 'string' ? origExtractUrlBase(url) : './')
 
-  // There's no Image in native, so create a data texture instead
+  // expo-gl's native texImage2D/texSubImage2D accept { localUri } objects.
+  // The C++ loadImage() in EXGLImageUtils uses stbi_load to decode the image
+  // from a file:// path and upload raw pixels to the GPU.
+  //
+  // We create a regular THREE.Texture (not DataTexture) so three.js uses the
+  // 6/7-arg texImage2D/texSubImage2D form which passes texture.image directly
+  // to GL — expo-gl then detects the localUri property and handles decoding.
   T.TextureLoader.prototype.load = function load(this: any, url: any, onLoad: any, onProgress: any, onError: any) {
     if (this.path && typeof url === 'string') url = this.path + url
 
@@ -144,22 +150,19 @@ function patchThreeLoaders(T: any) {
 
     getAsset(url)
       .then(async (uri: string) => {
-        // https://github.com/expo/expo-three/pull/266
         const { width, height } = await new Promise<{ width: number; height: number }>((res, rej) =>
           Image.getSize(uri, (width, height) => res({ width, height }), rej),
         )
 
-        texture.image = {
-          // Special case for EXGLImageUtils::loadImage
-          data: { localUri: uri },
-          width,
-          height,
-        }
-        texture.flipY = true // Since expo-gl@12.4.0
-        texture.needsUpdate = true
+        // Set image as { localUri } for expo-gl's native image loading path.
+        // expo-gl's EXGLImageUtils::loadImage checks for a localUri property,
+        // decodes the image with stbi_load, and uploads raw RGBA pixels.
+        texture.image = { localUri: uri, width, height }
 
-        // Force non-DOM upload for EXGL texImage2D
-        texture.isDataTexture = true
+        // expo-gl doesn't support UNPACK_FLIP_Y_WEBGL via pixelStorei —
+        // the native stbi_load produces correctly oriented pixels already.
+        texture.flipY = false
+        texture.needsUpdate = true
 
         onLoad?.(texture)
       })
