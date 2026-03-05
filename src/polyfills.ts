@@ -69,14 +69,16 @@ async function getAsset(input: string | number): Promise<string> {
         xhr.send()
       })
 
-      const data = await new Promise<string>((res, rej) => {
+      // Use readAsDataURL to correctly handle binary blob data.
+      // readAsText would corrupt binary content (images, models, etc.)
+      const dataUrl = await new Promise<string>((res, rej) => {
         const reader = new FileReader()
         reader.onload = () => res(reader.result as string)
         reader.onerror = rej
-        reader.readAsText(blob)
+        reader.readAsDataURL(blob)
       })
 
-      input = `data:${blob.type};base64,${data}`
+      input = dataUrl
     }
 
     // Create safe URI for JSI serialization
@@ -177,6 +179,8 @@ export function polyfills() {
 
     const texture = new THREE.Texture()
 
+    this.manager.itemStart(url)
+
     getAsset(url)
       .then(async (uri) => {
         // https://github.com/expo/expo-three/pull/266
@@ -199,7 +203,13 @@ export function polyfills() {
 
         onLoad?.(texture as any)
       })
-      .catch(onError)
+      .catch((error) => {
+        onError?.(error)
+        this.manager.itemError(url)
+      })
+      .finally(() => {
+        this.manager.itemEnd(url)
+      })
 
     return texture as any
   } as typeof THREE.TextureLoader.prototype.load
@@ -215,7 +225,21 @@ export function polyfills() {
         .then(async (uri) => {
           const base64 = await fs.readAsStringAsync(uri, { encoding: fs.EncodingType.Base64 })
           const data = Buffer.from(base64, 'base64')
-          onLoad?.(data.buffer)
+
+          // Respect responseType like the original FileLoader
+          switch (this.responseType) {
+            case 'json':
+              onLoad?.(JSON.parse(data.toString('utf-8')))
+              break
+            case '':
+            case 'text':
+              onLoad?.(data.toString('utf-8'))
+              break
+            default:
+              // 'arraybuffer' and any other type
+              onLoad?.(data.buffer)
+              break
+          }
         })
         .catch((error) => {
           onError?.(error)
