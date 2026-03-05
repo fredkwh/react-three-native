@@ -25,17 +25,31 @@
     "type": "git",
     "url": "git+https://github.com/pmndrs/react-three-fiber.git"
   },
-  "main": "dist/react-three-native.cjs.js",
-  "module": "dist/react-three-native.esm.js",
-  "types": "dist/react-three-native.cjs.d.ts",
-  "sideEffects": false,
-  "preconstruct": {
-    "entrypoints": [
-      "index.tsx"
-    ]
+  "main": "dist/index.cjs.js",
+  "module": "dist/index.esm.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.esm.js",
+      "require": "./dist/index.cjs.js"
+    }
   },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": [
+    "./dist/index.esm.js",
+    "./dist/index.cjs.js",
+    "./src/index.tsx"
+  ],
   "scripts": {
-    "prebuild": "cp ../../readme.md readme.md"
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "jest",
+    "lint": "tsc --noEmit"
   },
   "dependencies": {
     "base64-js": "^1.5.1",
@@ -51,6 +65,25 @@
     "react": "^19.0.0",
     "react-native": ">=0.78",
     "three": ">=0.156"
+  },
+  "devDependencies": {
+    "@react-three/fiber": "10.0.0-alpha.2",
+    "@react-three/test-renderer": "^11.0.0",
+    "@types/jest": "^29.5.0",
+    "@types/react": "^19.0.0",
+    "@types/three": "^0.183.0",
+    "expo-asset": "^55.0.0",
+    "expo-file-system": "^55.0.0",
+    "expo-gl": "^55.0.0",
+    "jest": "^29.7.0",
+    "react": "^19.0.0",
+    "react-native": "^0.78.0",
+    "react-nil": "^2.0.0",
+    "three": "^0.183.0",
+    "ts-jest": "^29.2.0",
+    "ts-node": "^10.9.2",
+    "tsup": "^8.3.0",
+    "typescript": "^5.7.0"
   },
   "peerDependenciesMeta": {
     "expo": {

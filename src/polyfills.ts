@@ -107,7 +107,19 @@ async function getAsset(input: string | number): Promise<string> {
 
 //* Polyfills ==============================
 
+// Save original references once so polyfills() is idempotent
+const _originals = {
+  extractUrlBase: THREE.LoaderUtils.extractUrlBase.bind(THREE.LoaderUtils),
+  textureLoad: THREE.TextureLoader.prototype.load,
+  fileLoad: THREE.FileLoader.prototype.load,
+}
+
+let _applied = false
+
 export function polyfills() {
+  if (_applied) return
+  _applied = true
+
   const fs = getFileSystem()
 
   // Patch Blob for ArrayBuffer and URL if unsupported
@@ -122,16 +134,16 @@ export function polyfills() {
       const BlobManagerModule = require('react-native/Libraries/Blob/BlobManager.js')
       const BlobManager = BlobManagerModule.default ?? BlobManagerModule
 
-      const createObjectURL = URL.createObjectURL
+      const origCreateObjectURL = URL.createObjectURL
       URL.createObjectURL = function (blob: Blob): string {
         if ((blob as any).data._base64) {
           return `data:${blob.type};base64,${(blob as any).data._base64}`
         }
 
-        return createObjectURL(blob)
+        return origCreateObjectURL(blob)
       }
 
-      const createFromParts = BlobManager.createFromParts
+      const origCreateFromParts = BlobManager.createFromParts
       BlobManager.createFromParts = function (parts: Array<Blob | BlobPart | string>, options: any) {
         parts = parts.map((part) => {
           if (part instanceof ArrayBuffer || ArrayBuffer.isView(part)) {
@@ -141,7 +153,7 @@ export function polyfills() {
           return part
         })
 
-        const blob = createFromParts(parts, options)
+        const blob = origCreateFromParts(parts, options)
 
         // Always enable slow but safe path for iOS (previously for Android unauth)
         // https://github.com/pmndrs/react-three-fiber/issues/3075
@@ -156,8 +168,7 @@ export function polyfills() {
   }
 
   // Don't pre-process urls, let expo-asset generate an absolute URL
-  const extractUrlBase = THREE.LoaderUtils.extractUrlBase.bind(THREE.LoaderUtils)
-  THREE.LoaderUtils.extractUrlBase = (url: string) => (typeof url === 'string' ? extractUrlBase(url) : './')
+  THREE.LoaderUtils.extractUrlBase = (url: string) => (typeof url === 'string' ? _originals.extractUrlBase(url) : './')
 
   // There's no Image in native, so create a data texture instead
   // Cast to any to bypass generic Texture<HTMLImageElement> typing since native uses custom image format
