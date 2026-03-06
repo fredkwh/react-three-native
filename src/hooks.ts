@@ -179,9 +179,16 @@ function patchSceneTextures(scene: THREE.Object3D): void {
         const tex = mat[prop]
         if (tex && !patched.has(tex.id)) {
           patched.add(tex.id)
+          const before = { generateMipmaps: tex.generateMipmaps, minFilter: tex.minFilter }
           tex.generateMipmaps = false
           tex.minFilter = THREE.LinearFilter
           tex.needsUpdate = true
+          console.log(
+            `[@r3n] patch tex id=${tex.id} ${prop}: ` +
+            `${tex.image?.width}x${tex.image?.height} ` +
+            `mipmaps=${before.generateMipmaps}→${tex.generateMipmaps} ` +
+            `minFilter=${before.minFilter}→${tex.minFilter}`
+          )
         }
       }
     }

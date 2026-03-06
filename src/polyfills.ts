@@ -214,12 +214,37 @@ function patchThreeLoaders(T: any) {
   // pixels, then set the full-size data on the texture and needsUpdate = true.
   // Three.js sees the version bump on the next render frame, calls texStorage2D
   // at the correct dimensions, and uploads — all within gl.render/endFrameEXP.
+  // Mipmap filters that expo-gl can't generate for DataTextures
+  const MIPMAP_FILTERS = new Set([
+    T.NearestMipmapNearestFilter, T.NearestMipmapLinearFilter,
+    T.LinearMipmapNearestFilter, T.LinearMipmapLinearFilter,
+  ])
+
   T.TextureLoader.prototype.load = function load(this: any, url: any, onLoad: any, onProgress: any, onError: any) {
     if (this.path && typeof url === 'string') url = this.path + url
 
     // 1x1 placeholder — NOT uploaded to GPU (needsUpdate stays false)
     const placeholder = new Uint8Array(4)
     const texture = new T.DataTexture(placeholder, 1, 1, T.RGBAFormat)
+
+    // expo-gl cannot generate mipmaps for DataTextures uploaded via
+    // texStorage2D. Lock generateMipmaps=false so downstream code
+    // (e.g. GLTFLoader) can't enable them — they'd render black.
+    Object.defineProperty(texture, 'generateMipmaps', {
+      get() { return false },
+      set() { /* silently ignore — expo-gl can't generate mipmaps for DataTextures */ },
+      configurable: true,
+    })
+
+    // Downgrade mipmap minFilters to LinearFilter since mipmaps
+    // aren't available. Stores the value on a closure variable so
+    // other code reads back the effective (downgraded) value.
+    let _minFilter = T.LinearFilter
+    Object.defineProperty(texture, 'minFilter', {
+      get() { return _minFilter },
+      set(v: number) { _minFilter = MIPMAP_FILTERS.has(v) ? T.LinearFilter : v },
+      configurable: true,
+    })
 
     this.manager.itemStart(url)
 
