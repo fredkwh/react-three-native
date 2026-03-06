@@ -160,6 +160,18 @@ const TEXTURE_PROPS = [
 ] as const
 
 /**
+ * Describe a texture's image for diagnostics.
+ */
+function describeImage(img: any): string {
+  if (img == null) return 'null'
+  if (typeof img === 'string') return `string("${img.slice(0, 80)}")`
+  const type = img.constructor?.name || typeof img
+  const w = img.width, h = img.height
+  const hasData = img.data ? `data=${img.data.constructor?.name}[${img.data.length}]` : 'no-data'
+  return `${type} ${w}x${h} ${hasData}`
+}
+
+/**
  * Patch all textures in a scene for expo-gl compatibility.
  *
  * expo-gl cannot generate mipmaps for DataTextures uploaded via
@@ -170,25 +182,34 @@ const TEXTURE_PROPS = [
  * a re-upload within the render loop.
  */
 function patchSceneTextures(scene: THREE.Object3D): void {
+  console.log(`[@r3n] patchSceneTextures: createImageBitmap=${typeof (globalThis as any).createImageBitmap}`)
+
   const patched = new Set<number>()
   scene.traverse((child: any) => {
     if (!child.isMesh || !child.material) return
     const materials = Array.isArray(child.material) ? child.material : [child.material]
     for (const mat of materials) {
+      console.log(`[@r3n] material: ${mat.constructor?.name} type=${mat.type}`)
       for (const prop of TEXTURE_PROPS) {
         const tex = mat[prop]
         if (tex && !patched.has(tex.id)) {
           patched.add(tex.id)
-          const before = { generateMipmaps: tex.generateMipmaps, minFilter: tex.minFilter }
+          const img = tex.image
+          const imgDesc = describeImage(img)
+          const texType = tex.constructor?.name
+          const isData = tex.isDataTexture
+
+          console.log(
+            `[@r3n] tex id=${tex.id} ${prop}: type=${texType} isDataTexture=${isData} ` +
+            `image=[${imgDesc}] ` +
+            `generateMipmaps=${tex.generateMipmaps} minFilter=${tex.minFilter} ` +
+            `needsUpdate=${tex.source?.version ?? '?'} flipY=${tex.flipY}`
+          )
+
+          // Fix mipmap settings
           tex.generateMipmaps = false
           tex.minFilter = THREE.LinearFilter
           tex.needsUpdate = true
-          console.log(
-            `[@r3n] patch tex id=${tex.id} ${prop}: ` +
-            `${tex.image?.width}x${tex.image?.height} ` +
-            `mipmaps=${before.generateMipmaps}→${tex.generateMipmaps} ` +
-            `minFilter=${before.minFilter}→${tex.minFilter}`
-          )
         }
       }
     }
