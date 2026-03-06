@@ -230,13 +230,16 @@ function CanvasImpl({
           // Overwrite onCreated to apply RN bindings
           onCreated: (state: RootState) => {
             // Bind render to RN bridge (expo-gl specific)
+            // Guard: only wrap once to prevent stacking endFrameEXP calls
+            // across re-renders (useIsomorphicLayoutEffect has no deps)
             const context = state.gl.getContext() as any
-            if (context.endFrameEXP) {
+            if (context.endFrameEXP && !(state.gl as any).__nativePatched) {
               const renderFrame = state.gl.render.bind(state.gl)
               state.gl.render = (scene: THREE.Scene, camera: THREE.Camera) => {
                 renderFrame(scene, camera)
                 context.endFrameEXP()
               }
+              ;(state.gl as any).__nativePatched = true
             }
 
             return onCreated?.(state)
