@@ -91,6 +91,54 @@ async function loadAndDecode(url: string): Promise<{ data: Uint8Array; width: nu
   }
 }
 
+// Module-level texture cache: same URL → same texture, shared across consumers
+type CacheEntry = {
+  texture: THREE.DataTexture
+  promise: Promise<{ data: Uint8Array; width: number; height: number }>
+  refCount: number
+  loaded: boolean
+  error: Error | null
+  result: { data: Uint8Array; width: number; height: number } | null
+}
+const textureCache = new Map<string, CacheEntry>()
+
+function acquireTexture(url: string): CacheEntry {
+  const existing = textureCache.get(url)
+  if (existing) {
+    existing.refCount++
+    return existing
+  }
+
+  const placeholder = new Uint8Array(4)
+  const texture = new THREE.DataTexture(placeholder, 1, 1, THREE.RGBAFormat)
+  const promise = loadAndDecode(url)
+
+  const entry: CacheEntry = { texture, promise, refCount: 1, loaded: false, error: null, result: null }
+
+  promise
+    .then((result) => {
+      entry.result = result
+      entry.loaded = true
+    })
+    .catch((err) => {
+      entry.error = err instanceof Error ? err : new Error(String(err))
+      entry.loaded = true
+    })
+
+  textureCache.set(url, entry)
+  return entry
+}
+
+function releaseTexture(url: string): void {
+  const entry = textureCache.get(url)
+  if (!entry) return
+  entry.refCount--
+  if (entry.refCount <= 0) {
+    entry.texture.dispose()
+    textureCache.delete(url)
+  }
+}
+
 /**
  * Load a remote or local image as a Three.js DataTexture.
  *
@@ -99,6 +147,7 @@ async function loadAndDecode(url: string): Promise<{ data: Uint8Array; width: nu
  * - isLoading: true while downloading/decoding
  * - error: null or Error if download/decode failed
  *
+ * Same URL across multiple components shares a single download and texture.
  * The placeholder texture stays visible on error so the mesh doesn't disappear.
  *
  * @param url - URL string or require() asset ID
@@ -110,64 +159,64 @@ export function useNativeTexture(
   onLoad?: (texture: THREE.DataTexture) => void,
   onError?: (error: Error) => void,
 ): [THREE.DataTexture, boolean, Error | null] {
-  const pendingRef = useRef<{ data: Uint8Array; width: number; height: number } | null>(null)
+  const urlStr = String(url)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<Error | null>(null)
+  const appliedRef = useRef(false)
 
-  // Create placeholder texture once — 1x1, NOT uploaded (needsUpdate=false)
-  const texture = useMemo(() => {
-    const placeholder = new Uint8Array(4)
-    return new THREE.DataTexture(placeholder, 1, 1, THREE.RGBAFormat)
-  }, [])
+  // Acquire from cache (refcounted)
+  const entry = useMemo(() => acquireTexture(urlStr), [urlStr])
 
-  // Download + decode in background
+  // Release on unmount or URL change
   useEffect(() => {
-    let cancelled = false
+    appliedRef.current = false
     setIsLoading(true)
     setError(null)
 
-    loadAndDecode(String(url))
-      .then((result) => {
-        if (!cancelled) {
-          pendingRef.current = result
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          const error = err instanceof Error ? err : new Error(String(err))
-          setError(error)
+    // If already loaded from cache, handle immediately
+    if (entry.loaded) {
+      if (entry.error) {
+        setError(entry.error)
+        setIsLoading(false)
+        onError?.(entry.error)
+      }
+      // result will be applied in useFrame
+    }
+
+    // Also set up async handler for in-flight requests
+    if (!entry.loaded) {
+      entry.promise
+        .then(() => {
+          // result applied in useFrame
+        })
+        .catch((err) => {
+          const e = err instanceof Error ? err : new Error(String(err))
+          setError(e)
           setIsLoading(false)
-          onError?.(error)
-        }
-      })
+          onError?.(e)
+        })
+    }
 
     return () => {
-      cancelled = true
+      releaseTexture(urlStr)
     }
-  }, [url])
-
-  // Dispose GPU resource on unmount
-  useEffect(() => {
-    return () => {
-      texture.dispose()
-    }
-  }, [texture])
+  }, [urlStr, entry])
 
   // Swap data inside the render loop so GL commands flush via endFrameEXP
   useFrame(() => {
-    if (pendingRef.current) {
-      const { data, width, height } = pendingRef.current
-      pendingRef.current = null
+    if (!appliedRef.current && entry.result) {
+      appliedRef.current = true
+      const { data, width, height } = entry.result
 
-      texture.image = { data, width, height }
-      texture.needsUpdate = true
+      entry.texture.image = { data, width, height }
+      entry.texture.needsUpdate = true
       setIsLoading(false)
 
-      onLoad?.(texture)
+      onLoad?.(entry.texture)
     }
   })
 
-  return [texture, isLoading, error]
+  return [entry.texture, isLoading, error]
 }
 
 // Texture property names to patch on GLTF materials
