@@ -56,7 +56,9 @@
   "dependencies": {
     "base64-js": "^1.5.1",
     "buffer": "^6.0.3",
-    "its-fine": "^2.0.0"
+    "its-fine": "^2.0.0",
+    "jpeg-js": "^0.4.4",
+    "upng-js": "^2.1.0"
   },
   "peerDependencies": {
     "@react-three/fiber": "^10.0.0",

@@ -14,7 +14,7 @@
  *   polyfills(THREE)
  */
 
-import { Image, NativeModules, Platform } from 'react-native'
+import { NativeModules, Platform } from 'react-native'
 import { fromByteArray } from 'base64-js'
 import { Buffer } from 'buffer'
 
@@ -115,6 +115,43 @@ async function getAsset(input: string | number): Promise<string> {
   return uri
 }
 
+//* Image Decoding ==============================
+
+/**
+ * Decode an image file (JPEG or PNG) to raw RGBA pixel data.
+ * Uses pure JS decoders (jpeg-js, upng-js) so no native image APIs are needed.
+ * expo-gl only supports TypedArray data in texImage2D — it cannot load from
+ * file URIs despite having loadImage() in native code.
+ */
+async function decodeImageToRGBA(uri: string): Promise<{ data: Uint8Array; width: number; height: number }> {
+  const fs = getFileSystem()
+  if (!fs) {
+    throw new Error('[@react-three/native] expo-file-system is required for image decoding')
+  }
+
+  const base64 = await fs.readAsStringAsync(uri, { encoding: fs.EncodingType.Base64 })
+  const bytes = Buffer.from(base64, 'base64')
+
+  // Detect format from magic bytes
+  if (bytes[0] === 0xff && bytes[1] === 0xd8) {
+    // JPEG
+    const jpeg = require('jpeg-js')
+    const decoded = jpeg.decode(bytes, { useTArray: true, formatAsRGBA: true })
+    return { data: new Uint8Array(decoded.data), width: decoded.width, height: decoded.height }
+  } else if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) {
+    // PNG
+    const UPNG = require('upng-js')
+    const img = UPNG.decode(bytes.buffer)
+    const rgba = UPNG.toRGBA8(img)
+    return { data: new Uint8Array(rgba[0]), width: img.width, height: img.height }
+  } else {
+    throw new Error(
+      `[@react-three/native] Unsupported image format (magic: 0x${bytes[0]?.toString(16)}${bytes[1]?.toString(16)}). ` +
+        'Only JPEG and PNG are supported.',
+    )
+  }
+}
+
 //* Polyfills ==============================
 
 let _globalApplied = false
@@ -134,34 +171,37 @@ function patchThreeLoaders(T: any) {
   // Don't pre-process urls, let expo-asset generate an absolute URL
   T.LoaderUtils.extractUrlBase = (url: string) => (typeof url === 'string' ? origExtractUrlBase(url) : './')
 
-  // expo-gl's native texImage2D/texSubImage2D accept { localUri } objects.
-  // The C++ loadImage() in EXGLImageUtils uses stbi_load to decode the image
-  // from a file:// path and upload raw pixels to the GPU.
+  // expo-gl only supports TypedArray pixel data in texImage2D/texSubImage2D.
+  // Its loadImage() with localUri objects does not work.
   //
-  // We create a regular THREE.Texture (not DataTexture) so three.js uses the
-  // 6/7-arg texImage2D/texSubImage2D form which passes texture.image directly
-  // to GL — expo-gl then detects the localUri property and handles decoding.
+  // Additionally, expo-gl batches GL commands and only flushes them via
+  // endFrameEXP() at the end of gl.render(). Textures created after the first
+  // render frame must already exist as GL objects — we can't create new GL
+  // textures from async callbacks outside the render loop.
+  //
+  // Strategy: create a 1x1 placeholder DataTexture synchronously (so the GL
+  // texture is allocated on the first render frame), then async decode the image
+  // to raw RGBA pixels and swap the data in-place. Setting needsUpdate = true
+  // bumps source.version; three.js detects the version mismatch on the next
+  // render frame (inside gl.render → endFrameEXP) and re-uploads.
   T.TextureLoader.prototype.load = function load(this: any, url: any, onLoad: any, onProgress: any, onError: any) {
     if (this.path && typeof url === 'string') url = this.path + url
 
-    const texture = new T.Texture()
+    // 1x1 transparent placeholder — returned synchronously
+    const placeholder = new Uint8Array(4)
+    const texture = new T.DataTexture(placeholder, 1, 1, T.RGBAFormat)
+    texture.needsUpdate = true
 
     this.manager.itemStart(url)
 
     getAsset(url)
       .then(async (uri: string) => {
-        const { width, height } = await new Promise<{ width: number; height: number }>((res, rej) =>
-          Image.getSize(uri, (width, height) => res({ width, height }), rej),
-        )
+        const { data, width, height } = await decodeImageToRGBA(uri)
 
-        // Set image as { localUri } for expo-gl's native image loading path.
-        // expo-gl's EXGLImageUtils::loadImage checks for a localUri property,
-        // decodes the image with stbi_load, and uploads raw RGBA pixels.
-        texture.image = { localUri: uri, width, height }
-
-        // expo-gl doesn't support UNPACK_FLIP_Y_WEBGL via pixelStorei —
-        // the native stbi_load produces correctly oriented pixels already.
-        texture.flipY = false
+        // Swap pixel data on the existing texture object.
+        // Three.js will detect source.version change and re-upload
+        // during the next gl.render() call (flushed by endFrameEXP).
+        texture.image = { data, width, height }
         texture.needsUpdate = true
 
         onLoad?.(texture)
