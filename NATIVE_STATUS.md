@@ -18,13 +18,17 @@ Current status of @react-three/native features, verified on a real iOS device us
 - [x] **Point light** — `<pointLight>` with position prop works
 - [x] **Polyfills** — `import '@react-three/native'` applies polyfills without errors
 - [x] **Re-exports** — `useFrame` from `@react-three/fiber` works alongside native Canvas
+- [x] **Touch events** — `onPointerDown`/`onPointerUp`/`onClick` work via PanResponder
+- [x] **Procedural DataTexture** — sync Uint8Array pixel data renders correctly
+- [x] **useNativeTexture hook** — remote JPEG/PNG loads and renders via async decode + useFrame swap
+- [x] **TextureLoader polyfill** — basic compatibility (1x1 placeholder + async decode); `useNativeTexture` recommended for reliable rendering
+- [x] **Multiple canvases** — two side-by-side `<Canvas>` instances render independently
+- [x] **Error boundaries** — `<ErrorBoundary>` catches errors inside Canvas children
+- [x] **GLContextProvider** — pluggable GL context (expo-gl default, swap for webgpu)
 
 ## Not Yet Tested
 
-- [ ] Touch/press events (`onPress`, `onPointerDown`, etc.)
-- [ ] Texture loading (requires expo-asset + expo-file-system)
 - [ ] GLTF/model loading
-- [ ] Multiple canvases
 - [ ] Canvas resize on orientation change
 - [ ] Background/foreground lifecycle (app suspend/resume)
 - [ ] Android device
@@ -34,18 +38,30 @@ Current status of @react-three/native features, verified on a real iOS device us
 - [ ] Shadows
 - [ ] Post-processing effects
 - [ ] React Suspense boundaries inside Canvas
-- [ ] Error boundaries inside Canvas
 
 ## Known Issues
 
-- **GL context stacking** — If `onContextCreate` fires multiple times without unmount, old roots may leak. A fix is in place (unmount previous root before creating new one) but edge cases remain under heavy remounting.
-- **endFrameEXP accumulation** — Rapid mount/unmount cycles could stack `endFrameEXP` calls in the render loop. Not observed in normal use.
-- **Temp files not cleaned up** — Blob URI polyfill creates temporary files via `expo-file-system` that are never deleted. Low impact for most apps, but long-running apps with heavy asset loading may accumulate files.
+- **Multi-touch not supported** — PanResponder only reports the primary touch. Multi-finger gestures (pinch-to-zoom, two-finger rotate) are not forwarded to the R3F event system. This is a fundamental PanResponder limitation; fixing it requires a custom gesture handler (e.g., react-native-gesture-handler).
+- **TextureLoader polyfill limitations** — The polyfilled `TextureLoader.load()` creates a 1x1 placeholder and swaps data async, but has no access to useFrame/invalidate. Textures may not upload on first frame. Use `useNativeTexture` hook for reliable texture rendering.
+- **expo-gl texStorage2D immutability** — expo-gl uses `texStorage2D` (WebGL2) which locks texture dimensions on first upload. Textures cannot be resized after creation. The `useNativeTexture` hook works around this by deferring the first upload until full-size data is ready.
+- **expo-gl GL command batching** — GL commands only flush via `endFrameEXP()` at the end of `gl.render()`. Texture uploads from async callbacks (useEffect, Promises) outside the render loop are never flushed. All GPU uploads must happen within the render loop.
+- **Temp cache files** — Data URI conversion creates cache files with deterministic names (content-hashed). Files are reused for identical content but never actively deleted. Long-running apps with many unique assets may accumulate cache files.
 - **BlobManager path** — The internal React Native BlobManager import path has changed across RN versions. A nested try/catch handles this, but future RN versions may need updates.
+- **Non-base64 data URIs** — Only base64-encoded data URIs are supported. Plain data URIs (`data:text/plain,Hello`) will throw a descriptive error.
+
+## Recent Fixes (2026-03-05)
+
+- **endFrameEXP stacking** — Fixed `gl.render` being wrapped multiple times on re-render. Added `__nativePatched` guard.
+- **Cache file accumulation** — Replaced random UUID filenames with deterministic content hashes for file reuse.
+- **Download dedup** — Concurrent `getAsset` calls for the same URL now share one download via in-flight map.
+- **Click threshold DPI** — Normalized tap-vs-drag threshold to ~20 physical pixels using `PixelRatio.get()`.
+- **BLOB_URI_SCHEME null** — Guarded against `BlobModule` being undefined before `startsWith` check.
+- **Data URI validation** — Non-base64 data URIs now throw a clear error instead of silently corrupting.
+- **GLContext reset** — Added `resetGLContext()` for hot reload and testing.
 
 ## Testbed App
 
-See [r3f-native-testbed](https://github.com/fredkwh/r3f-native-testbed) for the working test app. It renders a rotating orange box with tap-to-scale interaction.
+See [r3f-native-testbed](https://github.com/fredkwh/r3f-native-testbed) for the working test app with 7 test tabs.
 
 ### Minimal setup requirements
 
