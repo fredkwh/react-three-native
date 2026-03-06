@@ -136,6 +136,13 @@ export function useNativeTexture(
     }
   }, [url])
 
+  // Dispose GPU resource on unmount
+  useEffect(() => {
+    return () => {
+      texture.dispose()
+    }
+  }, [texture])
+
   // Swap data inside the render loop so GL commands flush via endFrameEXP
   useFrame(() => {
     if (pendingRef.current) {
