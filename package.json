@@ -1,6 +1,6 @@
 {
   "name": "@react-three/native",
-  "version": "10.0.0",
+  "version": "0.1.0-alpha.1",
   "description": "React Native bindings for @react-three/fiber",
   "keywords": [
     "react",
