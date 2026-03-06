@@ -194,7 +194,9 @@ function CanvasImpl({
         onPanResponderMove: (e) => handleTouch(e, 'pointermove'),
         onPanResponderEnd: (e, state) => {
           handleTouch(e, 'pointerup')
-          if (Math.hypot(state.dx, state.dy) < 20) handleTouch(e, 'click')
+          // Normalize click threshold to ~20 physical pixels across densities.
+          // PanResponder dx/dy are in dp, so divide by pixel ratio.
+          if (Math.hypot(state.dx, state.dy) < 20 / PixelRatio.get()) handleTouch(e, 'click')
         },
         onPanResponderRelease: (e) => handleTouch(e, 'pointerleave'),
         onPanResponderTerminate: (e) => handleTouch(e, 'lostpointercapture'),
