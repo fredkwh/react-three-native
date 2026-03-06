@@ -42,6 +42,16 @@ Solid 60fps up to 100 meshes. Drops to ~48fps at 200, ~30fps at 500. Memory stay
 3. **Console logs:** Every 5 seconds, the FPS counter logs `[Perf <label>] FPS: <n>` to the console. View via Xcode console or `npx expo start` terminal.
 4. **Memory:** Logged alongside FPS if `performance.memory` is available (may not be on all engines).
 
+## Texture Decode Impact
+
+Loading multiple textures simultaneously causes a significant FPS drop during decode. The jpeg-js and upng-js decoders are pure JavaScript running on the main thread (Hermes), so they block the render loop while decoding.
+
+| Scenario | FPS during decode | FPS after decode | Notes |
+|----------|-------------------|------------------|-------|
+| 10 simultaneous JPEG/PNG loads | ~3 | 60 | Recovers fully once all decodes complete |
+
+This is a known tradeoff of using pure JS decoders. Potential future mitigations: Web Worker offloading (if Hermes supports it), native image decode module, or staggering loads to limit concurrent decodes.
+
 ## Notes
 
 - All meshes use `<meshStandardMaterial>` with lighting (ambientLight + pointLight)
