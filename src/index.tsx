@@ -25,8 +25,8 @@ export { createTouchEvents as events } from './events'
 // Pluggable GL context
 export { GLContextProvider, useGLContext, resetGLContext, type GLContextValue, type GLContextProps } from './context'
 
-// Native texture loading hook (recommended over TextureLoader for reliable GPU upload)
-export { useNativeTexture } from './hooks'
+// Native hooks (recommended over polyfilled loaders for reliable GPU upload)
+export { useNativeTexture, useNativeGLTF } from './hooks'
 
 // Initialize polyfills on import (can be disabled by not importing from root)
 // Pass three explicitly so the polyfill patches this module's three instance.

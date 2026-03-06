@@ -26,8 +26,10 @@
  */
 
 import { useRef, useMemo, useEffect } from 'react'
-import { useFrame } from '@react-three/fiber'
+import { useFrame, useLoader } from '@react-three/fiber'
 import * as THREE from 'three'
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { Buffer } from 'buffer'
 
 // Lazy-load expo deps and decoders (same pattern as polyfills.ts)
@@ -148,4 +150,64 @@ export function useNativeTexture(
   })
 
   return texture
+}
+
+// Texture property names to patch on GLTF materials
+const TEXTURE_PROPS = [
+  'map', 'normalMap', 'emissiveMap', 'aoMap', 'metalnessMap',
+  'roughnessMap', 'bumpMap', 'displacementMap', 'envMap',
+  'lightMap', 'alphaMap',
+] as const
+
+/**
+ * Patch all textures in a scene for expo-gl compatibility.
+ *
+ * expo-gl cannot generate mipmaps for DataTextures uploaded via
+ * texStorage2D + texSubImage2D. Without mipmaps, textures with
+ * mipmap minFilters (the glTF default) render black.
+ *
+ * This disables mipmaps, switches to linear filtering, and forces
+ * a re-upload within the render loop.
+ */
+function patchSceneTextures(scene: THREE.Object3D): void {
+  const patched = new Set<number>()
+  scene.traverse((child: any) => {
+    if (!child.isMesh || !child.material) return
+    const materials = Array.isArray(child.material) ? child.material : [child.material]
+    for (const mat of materials) {
+      for (const prop of TEXTURE_PROPS) {
+        const tex = mat[prop]
+        if (tex && !patched.has(tex.id)) {
+          patched.add(tex.id)
+          tex.generateMipmaps = false
+          tex.minFilter = THREE.LinearFilter
+          tex.needsUpdate = true
+        }
+      }
+    }
+  })
+}
+
+/**
+ * Load a GLTF/GLB model with expo-gl-compatible texture handling.
+ *
+ * Uses useLoader(GLTFLoader) internally (triggers Suspense). On the first
+ * frame after load, patches all material textures to disable mipmaps
+ * (which expo-gl can't generate for DataTextures) and forces re-upload
+ * within the render loop via needsUpdate.
+ *
+ * @param url - URL string or require() asset ID
+ */
+export function useNativeGLTF(url: string | number): GLTF {
+  const gltf = useLoader(GLTFLoader, String(url))
+  const patchedRef = useRef(false)
+
+  useFrame(() => {
+    if (!patchedRef.current && gltf?.scene) {
+      patchedRef.current = true
+      patchSceneTextures(gltf.scene)
+    }
+  })
+
+  return gltf
 }

@@ -101,6 +101,11 @@ function CanvasImpl({
 
   const [antialias, setAntialias] = React.useState<boolean>(true)
 
+  // Track frameloop prop via ref so onContextCreate can access current value
+  // without being in its dependency array (avoids context recreation on prop change)
+  const frameloopRef = React.useRef(frameloop)
+  frameloopRef.current = frameloop
+
   const onLayout = React.useCallback((e: LayoutChangeEvent) => {
     const { width, height, x, y } = e.nativeEvent.layout
     setSize({ width, height, top: y, left: x })
@@ -166,6 +171,13 @@ function CanvasImpl({
 
       root.current = createRoot<HTMLCanvasElement>(canvas)
       canvasRef.current = canvas
+
+      // Pre-configure frameloop before any renders to prevent brief continuous
+      // animation when frameloop="demand". Full configure in useIsomorphicLayoutEffect.
+      if (frameloopRef.current && frameloopRef.current !== 'always') {
+        root.current.configure({ frameloop: frameloopRef.current } as any).catch(() => {})
+      }
+
       setCanvas(canvas)
 
       function handleTouch(gestureEvent: GestureResponderEvent, type: string): true {
