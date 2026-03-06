@@ -19,16 +19,16 @@ Current status of @react-three/native features, verified on a real iOS device us
 - [x] **Polyfills** — `import '@react-three/native'` applies polyfills without errors
 - [x] **Re-exports** — `useFrame` from `@react-three/fiber` works alongside native Canvas
 - [x] **Touch events** — `onPointerDown`/`onPointerUp`/`onClick` work via PanResponder
-- [x] **Procedural DataTexture** — sync Uint8Array pixel data renders correctly
-- [x] **useNativeTexture hook** — remote JPEG/PNG loads and renders via async decode + useFrame swap
+- [x] **Procedural DataTexture** — sync Uint8Array pixel data renders correctly (tested 64x64 and 2048x2048)
+- [x] **useNativeTexture hook** — remote JPEG/PNG loads and renders via async decode + useFrame swap (tested up to 2048x2048)
 - [x] **TextureLoader polyfill** — basic compatibility (1x1 placeholder + async decode); `useNativeTexture` recommended for reliable rendering
 - [x] **Multiple canvases** — two side-by-side `<Canvas>` instances render independently
 - [x] **Error boundaries** — `<ErrorBoundary>` catches errors inside Canvas children
 - [x] **GLContextProvider** — pluggable GL context (expo-gl default, swap for webgpu)
+- [x] **GLTF loading (simple)** — `useNativeGLTF` loads and renders Box.glb (geometry only) and BoxTextured.glb (geometry + single embedded texture) correctly via Suspense
 
 ## Not Yet Tested
 
-- [ ] GLTF/model loading
 - [ ] Canvas resize on orientation change
 - [ ] Background/foreground lifecycle (app suspend/resume)
 - [ ] Android device
@@ -41,6 +41,7 @@ Current status of @react-three/native features, verified on a real iOS device us
 ## Known Limitations
 
 - **`frameloop="demand"` not supported** — R3F v10's scheduler-based frame loop does not call `gl.render()` through the same code path in demand mode, so expo-gl's `endFrameEXP()` (which flushes GL commands to screen) never fires. The scene renders internally but nothing appears on screen. Use `frameloop="always"` (the default) for now. This is tracked for Phase 2.
+- **GLTF models with embedded PBR textures render black** — Geometry and emissive maps render correctly, but PBR texture maps (base color, normal, metalness, roughness, AO) render black. Root cause: expo-gl batches GL commands and only flushes via `endFrameEXP()` at the end of `gl.render()`. The polyfill's `TextureLoader.load()` sets `needsUpdate` from an async callback outside the render loop, so the texture upload never flushes. Three.js caches the unflushed WebGL texture handles and won't re-upload. Standalone `useNativeTexture` avoids this by deferring the upload to `useFrame`. **Workaround:** use simple models without PBR textures (BoxTextured works), use `MeshBasicMaterial`, or load textures separately with `useNativeTexture`. This will be resolved when react-native-webgpu replaces expo-gl as the GL backend.
 
 ## Known Issues
 

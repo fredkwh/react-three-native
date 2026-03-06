@@ -159,67 +159,17 @@ const TEXTURE_PROPS = [
   'lightMap', 'alphaMap',
 ] as const
 
-/**
- * Patch all textures in a scene for expo-gl compatibility.
- *
- * expo-gl cannot generate mipmaps for DataTextures uploaded via
- * texStorage2D + texSubImage2D. Without mipmaps, textures with
- * mipmap minFilters (the glTF default) render black.
- *
- * This disables mipmaps, switches to linear filtering, and forces
- * a re-upload within the render loop.
- */
-function describeTexImage(img: any): string {
-  if (img == null) return 'null'
-  if (typeof img === 'string') return `string("${img.slice(0, 100)}")`
-  const ctor = img.constructor?.name ?? typeof img
-  const w = img.width ?? '?'
-  const h = img.height ?? '?'
-  if (img.data) {
-    const dataCtor = img.data.constructor?.name ?? typeof img.data
-    return `{data:${dataCtor}[${img.data.length}], ${w}x${h}}`
-  }
-  // Check for localUri (expo-asset style)
-  if (img.localUri) return `{localUri:"${img.localUri}", ${w}x${h}}`
-  if (img.uri) return `{uri:"${String(img.uri).slice(0, 80)}", ${w}x${h}}`
-  // Enumerate keys for unknown objects
-  const keys = Object.keys(img).slice(0, 6).join(',')
-  return `${ctor}{${keys}, ${w}x${h}}`
-}
-
 function patchSceneTextures(scene: THREE.Object3D): void {
-  console.log(`[@r3n] patchSceneTextures called`)
-  console.log(`[@r3n] createImageBitmap=${typeof (globalThis as any).createImageBitmap}`)
-
   const patched = new Set<number>()
   scene.traverse((child: any) => {
     if (!child.isMesh || !child.material) return
     const materials = Array.isArray(child.material) ? child.material : [child.material]
     for (const mat of materials) {
-      console.log(`[@r3n] mesh="${child.name}" material.type=${mat.type} material.constructor=${mat.constructor?.name}`)
       for (const prop of TEXTURE_PROPS) {
         const tex = mat[prop]
         if (!tex) continue
-        if (patched.has(tex.id)) {
-          console.log(`[@r3n]   ${prop}: (already patched, tex id=${tex.id})`)
-          continue
-        }
+        if (patched.has(tex.id)) continue
         patched.add(tex.id)
-
-        // Check if the Object.defineProperty mipmap lock is active
-        const desc = Object.getOwnPropertyDescriptor(tex, 'generateMipmaps')
-        const hasLock = desc && typeof desc.get === 'function'
-
-        console.log(
-          `[@r3n]   ${prop}: id=${tex.id}` +
-          ` type=${tex.constructor?.name}` +
-          ` isDataTexture=${tex.isDataTexture === true}` +
-          ` image=${describeTexImage(tex.image)}` +
-          ` generateMipmaps=${tex.generateMipmaps} (locked=${hasLock})` +
-          ` minFilter=${tex.minFilter}` +
-          ` flipY=${tex.flipY}` +
-          ` version=${tex.source?.version ?? '?'}`
-        )
 
         tex.generateMipmaps = false
         tex.minFilter = THREE.LinearFilter
@@ -227,7 +177,6 @@ function patchSceneTextures(scene: THREE.Object3D): void {
       }
     }
   })
-  console.log(`[@r3n] patchSceneTextures done, patched ${patched.size} textures`)
 }
 
 /**
