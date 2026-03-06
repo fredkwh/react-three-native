@@ -223,9 +223,6 @@ function patchThreeLoaders(T: any) {
   T.TextureLoader.prototype.load = function load(this: any, url: any, onLoad: any, onProgress: any, onError: any) {
     if (this.path && typeof url === 'string') url = this.path + url
 
-    const urlPreview = typeof url === 'string' ? url.slice(0, 100) : String(url)
-    console.log(`[@r3n polyfill] TextureLoader.load called: ${urlPreview}`)
-
     // 1x1 placeholder — NOT uploaded to GPU (needsUpdate stays false)
     const placeholder = new Uint8Array(4)
     const texture = new T.DataTexture(placeholder, 1, 1, T.RGBAFormat)
@@ -254,8 +251,6 @@ function patchThreeLoaders(T: any) {
     getAsset(url)
       .then(async (uri: string) => {
         const { data, width, height } = await decodeImageToRGBA(uri)
-
-        console.log(`[@r3n polyfill] TextureLoader decoded: ${width}x${height} (${data.length} bytes) from ${urlPreview}`)
 
         // Set full-size pixel data. This is the FIRST time needsUpdate
         // is set to true, so texStorage2D will allocate at the correct

@@ -32,12 +32,15 @@ Current status of @react-three/native features, verified on a real iOS device us
 - [ ] Canvas resize on orientation change
 - [ ] Background/foreground lifecycle (app suspend/resume)
 - [ ] Android device
-- [ ] `frameloop="demand"` mode
 - [ ] Custom camera props
 - [ ] Raycasting / hit testing
 - [ ] Shadows
 - [ ] Post-processing effects
 - [ ] React Suspense boundaries inside Canvas
+
+## Known Limitations
+
+- **`frameloop="demand"` not supported** — R3F v10's scheduler-based frame loop does not call `gl.render()` through the same code path in demand mode, so expo-gl's `endFrameEXP()` (which flushes GL commands to screen) never fires. The scene renders internally but nothing appears on screen. Use `frameloop="always"` (the default) for now. This is tracked for Phase 2.
 
 ## Known Issues
 

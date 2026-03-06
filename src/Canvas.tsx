@@ -24,7 +24,6 @@ import {
   createRoot,
   unmountComponentAtNode,
   createPointerEvents,
-  getScheduler,
   type RenderProps,
   type ReconcilerRoot,
   type RootState,
@@ -233,25 +232,15 @@ function CanvasImpl({
           onPointerMissed: (...args) => handlePointerMissed.current?.(...args),
           // Overwrite onCreated to apply RN bindings
           onCreated: (state: RootState) => {
-            // expo-gl requires endFrameEXP() to flush GL commands to the
-            // screen. Register a scheduler job in the "finish" phase so it
-            // fires AFTER the render phase on every frame, regardless of
-            // frameloop mode (always, demand, or never+advance).
+            // Bind render to RN bridge (expo-gl specific)
+            // Guard: only wrap once to prevent stacking endFrameEXP calls
+            // across re-renders (useIsomorphicLayoutEffect has no deps)
             const context = state.gl.getContext() as any
             if (context.endFrameEXP && !(state.gl as any).__nativePatched) {
-              const rootId = (state as any).internal?.rootId
-              if (rootId) {
-                getScheduler().register(
-                  () => context.endFrameEXP(),
-                  { id: `${rootId}_endFrameEXP`, rootId, phase: 'finish' },
-                )
-              } else {
-                // Fallback: wrap gl.render directly if rootId unavailable
-                const renderFrame = state.gl.render.bind(state.gl)
-                state.gl.render = (scene: THREE.Scene, camera: THREE.Camera) => {
-                  renderFrame(scene, camera)
-                  context.endFrameEXP()
-                }
+              const renderFrame = state.gl.render.bind(state.gl)
+              state.gl.render = (scene: THREE.Scene, camera: THREE.Camera) => {
+                renderFrame(scene, camera)
+                context.endFrameEXP()
               }
               ;(state.gl as any).__nativePatched = true
             }
