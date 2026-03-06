@@ -41,16 +41,32 @@ const getExpoAsset = () => {
   }
 }
 
-// http://stackoverflow.com/questions/105034
-function uuidv4() {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0,
-      v = c == 'x' ? r : (r & 0x3) | 0x8
-    return v.toString(16)
-  })
+// Simple string hash for deterministic cache filenames (replaces random UUIDs)
+function hashString(str: string): string {
+  let hash = 0
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0
+  }
+  return (hash >>> 0).toString(36)
 }
 
+// In-flight request dedup: concurrent calls for the same input share one download
+const _inflight = new Map<string, Promise<string>>()
+
 async function getAsset(input: string | number): Promise<string> {
+  const key = String(input)
+
+  const existing = _inflight.get(key)
+  if (existing) return existing
+
+  const promise = getAssetImpl(input).finally(() => {
+    _inflight.delete(key)
+  })
+  _inflight.set(key, promise)
+  return promise
+}
+
+async function getAssetImpl(input: string | number): Promise<string> {
   const fs = getFileSystem()
   const Asset = getExpoAsset()
 
@@ -67,7 +83,8 @@ async function getAsset(input: string | number): Promise<string> {
 
     // Unpack Blobs from react-native BlobManager
     // https://github.com/facebook/react-native/issues/22681#issuecomment-523258955
-    if (input.startsWith('blob:') || input.startsWith(NativeModules.BlobModule?.BLOB_URI_SCHEME)) {
+    const blobScheme = NativeModules.BlobModule?.BLOB_URI_SCHEME
+    if (input.startsWith('blob:') || (blobScheme && input.startsWith(blobScheme))) {
       const blob = await new Promise<Blob>((res, rej) => {
         const xhr = new XMLHttpRequest()
         xhr.open('GET', input as string)
@@ -91,10 +108,22 @@ async function getAsset(input: string | number): Promise<string> {
 
     // Create safe URI for JSI serialization
     if (input.startsWith('data:')) {
-      const [header, data] = input.split(';base64,')
+      // Only handle base64 data URIs — skip plain data URIs (e.g. data:text/plain,Hello)
+      const base64Marker = ';base64,'
+      const markerIndex = input.indexOf(base64Marker)
+      if (markerIndex === -1) {
+        throw new Error(
+          '[@react-three/native] Non-base64 data URIs are not supported. ' +
+            'Convert to base64 encoding first.',
+        )
+      }
+
+      const header = input.slice(0, markerIndex)
+      const data = input.slice(markerIndex + base64Marker.length)
       const [, type] = header.split('/')
 
-      const uri = fs.cacheDirectory + uuidv4() + `.${type}`
+      // Deterministic filename from content hash — reuses cache for same data
+      const uri = fs.cacheDirectory + 'r3n-' + hashString(data.slice(0, 256)) + `.${type}`
       await fs.writeAsStringAsync(uri, data, { encoding: fs.EncodingType.Base64 })
 
       return uri
