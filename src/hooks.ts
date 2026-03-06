@@ -25,7 +25,7 @@
  *   }
  */
 
-import { useRef, useMemo, useEffect } from 'react'
+import { useRef, useMemo, useEffect, useState } from 'react'
 import { useFrame, useLoader } from '@react-three/fiber'
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
@@ -94,9 +94,12 @@ async function loadAndDecode(url: string): Promise<{ data: Uint8Array; width: nu
 /**
  * Load a remote or local image as a Three.js DataTexture.
  *
- * Returns a DataTexture immediately (1x1 placeholder). The actual image
- * is decoded asynchronously and swapped in during a useFrame callback,
- * ensuring the GL upload happens within the render loop.
+ * Returns [texture, isLoading, error]:
+ * - texture: DataTexture (1x1 placeholder until loaded)
+ * - isLoading: true while downloading/decoding
+ * - error: null or Error if download/decode failed
+ *
+ * The placeholder texture stays visible on error so the mesh doesn't disappear.
  *
  * @param url - URL string or require() asset ID
  * @param onLoad - Optional callback when texture data is ready
@@ -106,8 +109,10 @@ export function useNativeTexture(
   url: string | number,
   onLoad?: (texture: THREE.DataTexture) => void,
   onError?: (error: Error) => void,
-): THREE.DataTexture {
+): [THREE.DataTexture, boolean, Error | null] {
   const pendingRef = useRef<{ data: Uint8Array; width: number; height: number } | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<Error | null>(null)
 
   // Create placeholder texture once — 1x1, NOT uploaded (needsUpdate=false)
   const texture = useMemo(() => {
@@ -118,6 +123,8 @@ export function useNativeTexture(
   // Download + decode in background
   useEffect(() => {
     let cancelled = false
+    setIsLoading(true)
+    setError(null)
 
     loadAndDecode(String(url))
       .then((result) => {
@@ -127,7 +134,10 @@ export function useNativeTexture(
       })
       .catch((err) => {
         if (!cancelled) {
-          onError?.(err instanceof Error ? err : new Error(String(err)))
+          const error = err instanceof Error ? err : new Error(String(err))
+          setError(error)
+          setIsLoading(false)
+          onError?.(error)
         }
       })
 
@@ -151,12 +161,13 @@ export function useNativeTexture(
 
       texture.image = { data, width, height }
       texture.needsUpdate = true
+      setIsLoading(false)
 
       onLoad?.(texture)
     }
   })
 
-  return texture
+  return [texture, isLoading, error]
 }
 
 // Texture property names to patch on GLTF materials
