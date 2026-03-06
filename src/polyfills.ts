@@ -174,23 +174,23 @@ function patchThreeLoaders(T: any) {
   // expo-gl only supports TypedArray pixel data in texImage2D/texSubImage2D.
   // Its loadImage() with localUri objects does not work.
   //
-  // Additionally, expo-gl batches GL commands and only flushes them via
-  // endFrameEXP() at the end of gl.render(). Textures created after the first
-  // render frame must already exist as GL objects — we can't create new GL
-  // textures from async callbacks outside the render loop.
+  // expo-gl uses texStorage2D (immutable) to allocate GPU texture memory on
+  // the first upload. The size is locked — you can't resize later. And expo-gl
+  // batches GL commands, only flushing via endFrameEXP() at the end of
+  // gl.render(). So the first texStorage2D call must be at the correct size.
   //
-  // Strategy: create a 1x1 placeholder DataTexture synchronously (so the GL
-  // texture is allocated on the first render frame), then async decode the image
-  // to raw RGBA pixels and swap the data in-place. Setting needsUpdate = true
-  // bumps source.version; three.js detects the version mismatch on the next
-  // render frame (inside gl.render → endFrameEXP) and re-uploads.
+  // Strategy: return a 1x1 placeholder DataTexture synchronously (TextureLoader
+  // API contract), but with needsUpdate = false so three.js never uploads the
+  // placeholder to the GPU. Async: download and decode the image to raw RGBA
+  // pixels, then set the full-size data on the texture and needsUpdate = true.
+  // Three.js sees the version bump on the next render frame, calls texStorage2D
+  // at the correct dimensions, and uploads — all within gl.render/endFrameEXP.
   T.TextureLoader.prototype.load = function load(this: any, url: any, onLoad: any, onProgress: any, onError: any) {
     if (this.path && typeof url === 'string') url = this.path + url
 
-    // 1x1 transparent placeholder — returned synchronously
+    // 1x1 placeholder — NOT uploaded to GPU (needsUpdate stays false)
     const placeholder = new Uint8Array(4)
     const texture = new T.DataTexture(placeholder, 1, 1, T.RGBAFormat)
-    texture.needsUpdate = true
 
     this.manager.itemStart(url)
 
@@ -198,9 +198,9 @@ function patchThreeLoaders(T: any) {
       .then(async (uri: string) => {
         const { data, width, height } = await decodeImageToRGBA(uri)
 
-        // Swap pixel data on the existing texture object.
-        // Three.js will detect source.version change and re-upload
-        // during the next gl.render() call (flushed by endFrameEXP).
+        // Set full-size pixel data. This is the FIRST time needsUpdate
+        // is set to true, so texStorage2D will allocate at the correct
+        // dimensions on the next render frame.
         texture.image = { data, width, height }
         texture.needsUpdate = true
 
