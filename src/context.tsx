@@ -85,3 +85,12 @@ export function useGLContext(): GLContextValue {
   const context = React.useContext(GLContext)
   return context ?? getDefaultGLContext()
 }
+
+/**
+ * Reset the cached default GL context singleton.
+ * Useful for hot reload and testing — forces re-initialization
+ * of expo-gl on next useGLContext() call.
+ */
+export function resetGLContext(): void {
+  defaultGLContext = null
+}
